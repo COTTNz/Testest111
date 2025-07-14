@@ -1,115 +1,259 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Accurate WebXR Measure</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-
+    <title>Shape Recognition with Specific Ruler Tracking</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <style>
-        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
-        #ar-button { z-index: 9999; position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 12px 24px; font-size: 18px; background-color: #007aff; color: white; border: none; border-radius: 25px; cursor: pointer; }
-        .ui-overlay { position: fixed; left: 0; right: 0; z-index: 9998; text-align: center; }
-        #ui-container { top: 20px; padding: 10px 20px; background-color: rgba(0, 0, 0, 0.6); color: white; border-radius: 10px; font-size: 24px; font-weight: 500; display: none; margin: 0 auto; width: fit-content; }
-        #reset-button { bottom: 20px; right: 20px; width: 50px; height: 50px; background-color: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: none; border-radius: 50%; font-size: 24px; cursor: pointer; display: none; }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: #111;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #video-container {
+            position: relative;
+            width: 95vw;
+            max-width: 800px;
+            margin-top: 10px;
+            border: 2px solid #333;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        video, canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        video {
+            z-index: 1;
+        }
+        canvas {
+            z-index: 2;
+        }
+        #info-panel {
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 10px;
+            text-align: center;
+            max-width: 90vw;
+        }
+        #loader {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.5em;
+            z-index: 100;
+        }
     </style>
 </head>
-
 <body>
-    <div class="ui-overlay" id="ui-container">
-        <span id="distance-text">0.00 m</span>
+    <h1>Shape Recognition with Specific Ruler Tracking</h1>
+    <div id="info-panel">
+        วางไม้บรรทัด (15cm) ในกล้องให้ชัดเจน<br>เมื่อเจอไม้บรรทัดแล้ว จึงจะเริ่มวัดขนาดวัตถุอื่น
     </div>
-    <button class="ui-overlay" id="reset-button" onclick="document.querySelector('a-scene').components['ar-measure-pro'].reset()">↺</button>
-    
-    <a-scene 
-        webxr="requiredFeatures: local-floor, hit-test; optionalFeatures: dom-overlay; overlayElement: #ui-container, #reset-button;"
-        xr-hit-test="target: #reticle; realWorld: true;"
-        ar-measure-pro
-        renderer="colorManagement: true;">
 
-        <a-assets>
-            <a-mixin id="marker-sphere" geometry="primitive: sphere; radius: 0.01;" material="color: #007AFF; metalness: 0.2; roughness: 0.1;"></a-mixin>
-        </a-assets>
+    <div id="video-container">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="outputCanvas"></canvas>
+    </div>
 
-        <a-camera></a-camera>
-        <a-entity id="reticle" geometry="primitive: ring; radiusInner: 0.01; radiusOuter: 0.015;" material="color: #FFF; shader: flat;" visible="false"></a-entity>
+    <div id="loader">กำลังโหลด OpenCV.js...</div>
 
-        <a-light type="ambient" color="#FFF" intensity="0.7"></a-light>
-        <a-light type="directional" color="#FFF" intensity="0.8" position="-1 2 1"></a-light>
-    </a-scene>
+    <!-- Load OpenCV.js -->
+    <script async src="https://docs.opencv.org/4.9.0/opencv.js" onload="onOpenCvReady();" onerror="onOpenCvError();"></script>
 
     <script>
-        AFRAME.registerComponent('ar-measure-pro', {
-            init: function() {
-                this.points = [];
-                this.lineEntity = null;
-                this.distanceText = document.getElementById('distance-text');
-                
-                this.el.sceneEl.addEventListener('enter-vr', () => {
-                    document.getElementById('ui-container').style.display = 'inline-block';
-                    document.getElementById('reset-button').style.display = 'block';
+        // --- Configuration ---
+        const KNOWN_LENGTH_CM = 15.0; 
+        const RULER_ASPECT_RATIO = 4.0;
+
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('outputCanvas');
+        const ctx = canvas.getContext('2d');
+        const loader = document.getElementById('loader');
+        let stream;
+
+        function onOpenCvError() {
+            loader.innerText = "ไม่สามารถโหลด OpenCV.js ได้ โปรดรีเฟรชหน้าจอ";
+        }
+
+        function onOpenCvReady() {
+            loader.style.display = 'none';
+            startCamera();
+        }
+
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'environment',
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    },
+                    audio: false
                 });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    const videoContainer = document.getElementById('video-container');
+                    const aspectRatio = video.videoWidth / video.videoHeight;
+                    videoContainer.style.height = `${videoContainer.clientWidth / aspectRatio}px`;
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    requestAnimationFrame(processVideo);
+                };
+            } catch (err) {
+                console.error("Camera Error:", err);
+                alert("ไม่สามารถเข้าถึงกล้องได้ โปรดตรวจสอบการอนุญาต");
+            }
+        }
 
-                this.el.sceneEl.addEventListener('exit-vr', () => {
-                    document.getElementById('ui-container').style.display = 'none';
-                    document.getElementById('reset-button').style.display = 'none';
-                    this.reset();
-                });
+        function processVideo() {
+            if (!stream || video.paused || video.ended) return;
 
-                this.el.sceneEl.addEventListener('select', this.onSelect.bind(this));
-            },
-
-            onSelect: function() {
-                const reticle = document.getElementById('reticle');
-                if (reticle.getAttribute('visible') && this.points.length < 2) {
-                    const position = new THREE.Vector3();
-                    reticle.object3D.getWorldPosition(position);
-                    
-                    const marker = document.createElement('a-entity');
-                    marker.setAttribute('mixin', 'marker-sphere');
-                    marker.object3D.position.copy(position);
-                    this.el.sceneEl.appendChild(marker);
-
-                    this.points.push(position);
-
-                    if (this.points.length === 1) {
-                        this.lineEntity = document.createElement('a-entity');
-                        this.lineEntity.setAttribute('line', {
-                            color: '#FFD700',
-                            linewidth: 5,
-                            start: this.points[0],
-                            end: this.points[0]
-                        });
-                        this.el.sceneEl.appendChild(this.lineEntity);
-                    }
-                }
-            },
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             
-            tick: function() {
-                // อัปเดตเส้นแบบเรียลไทม์เมื่อมี 1 จุด
-                if (this.points.length === 1 && this.lineEntity) {
-                    const reticle = document.getElementById('reticle');
-                    if (reticle.getAttribute('visible')) {
-                        const reticlePosition = new THREE.Vector3();
-                        reticle.object3D.getWorldPosition(reticlePosition);
-                        
-                        this.lineEntity.setAttribute('line', 'end', reticlePosition);
-                        const distance = this.points[0].distanceTo(reticlePosition);
-                        this.distanceText.textContent = `${distance.toFixed(2)} m`;
-                    }
-                } else if (this.points.length === 2) {
-                    const distance = this.points[0].distanceTo(this.points[1]);
-                    this.distanceText.textContent = `${distance.toFixed(2)} m`;
-                }
-            },
+            // *** เพิ่มเข้ามาใหม่: วาดสัญญาณไฟว่ากำลังทำงาน ***
+            drawDetectionIndicator();
 
-            reset: function() {
-                this.points = [];
-                if (this.lineEntity) {
-                    this.lineEntity.parentNode.removeChild(this.lineEntity);
-                    this.lineEntity = null;
+            let src = cv.imread(canvas);
+            let gray = new cv.Mat();
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            let blurred = new cv.Mat();
+            cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+            let edged = new cv.Mat();
+            cv.Canny(blurred, edged, 50, 150);
+            let contours = new cv.MatVector();
+            let hierarchy = new cv.Mat();
+            cv.findContours(edged, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+            let pixelsPerCm = null;
+            let referenceFound = false;
+
+            // --- ค้นหาวัตถุอ้างอิง (ไม้บรรทัด) โดยใช้อัตราส่วนภาพ ---
+            for (let i = 0; i < contours.size(); ++i) {
+                let cnt = contours.get(i);
+                let peri = cv.arcLength(cnt, true);
+                let approx = new cv.Mat();
+                cv.approxPolyDP(cnt, approx, 0.04 * peri, true);
+
+                if (approx.rows === 4 && cv.contourArea(cnt) > 1000) {
+                    let rect = cv.boundingRect(cnt);
+                    const aspectRatio = Math.max(rect.width, rect.height) / Math.min(rect.width, rect.height);
+
+                    if (aspectRatio > RULER_ASPECT_RATIO) {
+                        const longSidePixels = Math.max(rect.width, rect.height);
+                        pixelsPerCm = longSidePixels / KNOWN_LENGTH_CM;
+                        
+                        ctx.strokeStyle = 'lime';
+                        ctx.lineWidth = 4;
+                        ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+                        drawText("ไม้บรรทัด (อ้างอิง)", rect.x, rect.y - 10, "lime");
+                        referenceFound = true;
+                        approx.delete();
+                        cnt.delete();
+                        break;
+                    }
                 }
-                document.querySelectorAll('[mixin="marker-sphere"]').forEach(marker => marker.parentNode.removeChild(marker));
-                this.distanceText.textContent = '0.00 m';
+                approx.delete();
+            }
+            
+            // --- วิเคราะห์และวาดรูปทรงอื่นๆ (ถ้าเจอวัตถุอ้างอิงแล้ว) ---
+            if (referenceFound) {
+                for (let i = 0; i < contours.size(); ++i) {
+                    let cnt = contours.get(i);
+                    if (cv.contourArea(cnt) < 500) {
+                        cnt.delete();
+                        continue;
+                    }
+
+                    let peri = cv.arcLength(cnt, true);
+                    let approx = new cv.Mat();
+                    cv.approxPolyDP(cnt, approx, 0.04 * peri, true);
+                    let rect = cv.boundingRect(cnt);
+
+                    let shape = "ไม่รู้จัก";
+                    let formula = "";
+                    let result = "";
+                    let widthCm = rect.width / pixelsPerCm;
+                    let heightCm = rect.height / pixelsPerCm;
+
+                    if (approx.rows === 3) {
+                        shape = "สามเหลี่ยม";
+                        let area = (0.5 * widthCm * heightCm).toFixed(2);
+                        formula = "พื้นที่: 0.5 x ฐาน x สูง";
+                        result = `พื้นที่ ≈ ${area} cm²`;
+                    } else if (approx.rows === 4) {
+                        let ar = widthCm / heightCm;
+                        shape = (ar >= 0.95 && ar <= 1.05) ? "สี่เหลี่ยมจัตุรัส" : "สี่เหลี่ยมผืนผ้า";
+                        let area = (widthCm * heightCm).toFixed(2);
+                        formula = "พื้นที่: กว้าง x ยาว";
+                        result = `พื้นที่ ≈ ${area} cm²`;
+                    } else {
+                        let circle = cv.minEnclosingCircle(cnt);
+                        let circleArea = Math.PI * Math.pow(circle.radius, 2);
+                        let contourArea = cv.contourArea(cnt);
+                        if (Math.abs(circleArea - contourArea) / contourArea < 0.2) {
+                            shape = "วงกลม";
+                            let radiusCm = circle.radius / pixelsPerCm;
+                            let area = (Math.PI * Math.pow(radiusCm, 2)).toFixed(2);
+                            formula = "พื้นที่: π × r²";
+                            result = `พื้นที่ ≈ ${area} cm²`;
+                            widthCm = radiusCm * 2;
+                            heightCm = widthCm;
+                        }
+                    }
+
+                    cv.drawContours(src, contours, i, [255, 255, 0, 255], 2);
+                    let textY = rect.y > 70 ? rect.y - 10 : rect.y + rect.height + 20;
+                    drawText(shape, rect.x, textY, "yellow");
+                    drawText(`ขนาด: ${widthCm.toFixed(1)} x ${heightCm.toFixed(1)} cm`, rect.x, textY + 20, "white");
+                    drawText(formula, rect.x, textY + 40, "cyan");
+                    drawText(result, rect.x, textY + 60, "cyan");
+
+                    approx.delete();
+                    cnt.delete();
+                }
+            }
+
+            cv.imshow(canvas, src);
+            src.delete(); gray.delete(); blurred.delete(); edged.delete(); contours.delete(); hierarchy.delete();
+            requestAnimationFrame(processVideo);
+        }
+
+        function drawText(text, x, y, color) {
+            ctx.font = '16px Arial';
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            const textMetrics = ctx.measureText(text);
+            ctx.fillRect(x - 2, y - 16, textMetrics.width + 4, 20);
+            ctx.fillStyle = color;
+            ctx.fillText(text, x, y);
+        }
+
+        // *** ฟังก์ชันใหม่สำหรับวาดสัญญาณไฟ ***
+        function drawDetectionIndicator() {
+            // ทำให้ไฟกระพริบทุกๆ ครึ่งวินาที
+            const isVisible = Math.floor(Date.now() / 500) % 2 === 0;
+            if (isVisible) {
+                ctx.fillStyle = 'red';
+                ctx.beginPath();
+                ctx.arc(canvas.width - 20, 20, 8, 0, 2 * Math.PI); // วาดวงกลมที่มุมขวาบน
+                ctx.fill();
+            }
+        }
+        
+        window.addEventListener('beforeunload', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
             }
         });
     </script>
