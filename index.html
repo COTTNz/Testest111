@@ -1,170 +1,89 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebXR Measure App</title>
+    <title>Accurate WebXR Measure</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 
     <style>
-        body {
-            margin: 0;
-            font-family: Arial, sans-serif;
-        }
-        #ar-button {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            padding: 12px 24px;
-            font-size: 18px;
-            background-color: #007aff;
-            color: white;
-            border: none;
-            border-radius: 25px;
-            cursor: pointer;
-            z-index: 9999;
-        }
-        #ui-container {
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            padding: 10px 20px;
-            background-color: rgba(0, 0, 0, 0.5);
-            color: white;
-            border-radius: 10px;
-            font-size: 24px;
-            display: none; /* ซ่อนไว้ก่อนเข้าโหมด AR */
-            z-index: 9999;
-        }
-        #reset-button {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            width: 50px;
-            height: 50px;
-            background-color: rgba(255, 255, 255, 0.8);
-            border: none;
-            border-radius: 50%;
-            font-size: 24px;
-            cursor: pointer;
-            display: none; /* ซ่อนไว้ก่อนเข้าโหมด AR */
-            z-index: 9999;
-        }
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
+        #ar-button { z-index: 9999; position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 12px 24px; font-size: 18px; background-color: #007aff; color: white; border: none; border-radius: 25px; cursor: pointer; }
+        .ui-overlay { position: fixed; left: 0; right: 0; z-index: 9998; text-align: center; }
+        #ui-container { top: 20px; padding: 10px 20px; background-color: rgba(0, 0, 0, 0.6); color: white; border-radius: 10px; font-size: 24px; font-weight: 500; display: none; margin: 0 auto; width: fit-content; }
+        #reset-button { bottom: 20px; right: 20px; width: 50px; height: 50px; background-color: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: none; border-radius: 50%; font-size: 24px; cursor: pointer; display: none; }
     </style>
 </head>
 
 <body>
-    <div id="ui-container">
+    <div class="ui-overlay" id="ui-container">
         <span id="distance-text">0.00 m</span>
     </div>
-    <button id="reset-button" onclick="resetMeasurement()">↺</button>
+    <button class="ui-overlay" id="reset-button" onclick="document.querySelector('a-scene').components['ar-measure-pro'].reset()">↺</button>
     
     <a-scene 
-        webxr="
-            requiredFeatures: local-floor, hit-test;
-            optionalFeatures: dom-overlay;
-            overlayElement: #ui-container;
-        "
-        xr-hit-test="target: #reticle;"
-        ar-measure
+        webxr="requiredFeatures: local-floor, hit-test; optionalFeatures: dom-overlay; overlayElement: #ui-container, #reset-button;"
+        xr-hit-test="target: #reticle; realWorld: true;"
+        ar-measure-pro
         renderer="colorManagement: true;">
 
         <a-assets>
-            <a-mixin id="marker-sphere" geometry="primitive: sphere; radius: 0.015;" material="color: #007AFF;"></a-mixin>
+            <a-mixin id="marker-sphere" geometry="primitive: sphere; radius: 0.01;" material="color: #007AFF; metalness: 0.2; roughness: 0.1;"></a-mixin>
         </a-assets>
 
         <a-camera></a-camera>
-        <a-entity id="reticle" geometry="primitive: ring; radiusInner: 0.01; radiusOuter: 0.015;" material="color: #007AFF;" visible="false"></a-entity>
+        <a-entity id="reticle" geometry="primitive: ring; radiusInner: 0.01; radiusOuter: 0.015;" material="color: #FFF; shader: flat;" visible="false"></a-entity>
 
-        <a-light type="ambient" color="#FFF" intensity="0.5"></a-light>
-        <a-light type="directional" color="#FFF" intensity="1" position="-1 2 1"></a-light>
-        
+        <a-light type="ambient" color="#FFF" intensity="0.7"></a-light>
+        <a-light type="directional" color="#FFF" intensity="0.8" position="-1 2 1"></a-light>
     </a-scene>
 
     <script>
-        // ฟังก์ชันสำหรับปุ่ม Reset ภายนอก Component
-        function resetMeasurement() {
-            const sceneEl = document.querySelector('a-scene');
-            if (sceneEl.components['ar-measure']) {
-                sceneEl.components['ar-measure'].reset();
-            }
-        }
-
-        // --- A-Frame Component หลักสำหรับจัดการการวัด ---
-        AFRAME.registerComponent('ar-measure', {
-            
+        AFRAME.registerComponent('ar-measure-pro', {
             init: function() {
                 this.points = [];
                 this.lineEntity = null;
                 this.distanceText = document.getElementById('distance-text');
-                this.uiContainer = document.getElementById('ui-container');
-                this.resetButton = document.getElementById('reset-button');
                 
-                // แสดง UI เมื่อเข้าสู่โหมด AR
                 this.el.sceneEl.addEventListener('enter-vr', () => {
-                    this.uiContainer.style.display = 'block';
-                    this.resetButton.style.display = 'block';
+                    document.getElementById('ui-container').style.display = 'inline-block';
+                    document.getElementById('reset-button').style.display = 'block';
                 });
 
-                // ซ่อน UI เมื่อออกจากโหมด AR
                 this.el.sceneEl.addEventListener('exit-vr', () => {
-                    this.uiContainer.style.display = 'none';
-                    this.resetButton.style.display = 'none';
+                    document.getElementById('ui-container').style.display = 'none';
+                    document.getElementById('reset-button').style.display = 'none';
                     this.reset();
                 });
 
-                // จัดการการแตะหน้าจอ (select คือ event มาตรฐานของ WebXR)
                 this.el.sceneEl.addEventListener('select', this.onSelect.bind(this));
             },
 
             onSelect: function() {
                 const reticle = document.getElementById('reticle');
-                
-                // ตรวจสอบว่า Reticle แสดงอยู่ (คือเราเล็งไปที่พื้นผิวที่ตรวจจับได้)
                 if (reticle.getAttribute('visible') && this.points.length < 2) {
                     const position = new THREE.Vector3();
                     reticle.object3D.getWorldPosition(position);
                     
-                    this.addPoint(position);
-                }
-            },
+                    const marker = document.createElement('a-entity');
+                    marker.setAttribute('mixin', 'marker-sphere');
+                    marker.object3D.position.copy(position);
+                    this.el.sceneEl.appendChild(marker);
 
-            addPoint: function(position) {
-                // เพิ่มจุดลงใน array
-                this.points.push(position.clone());
+                    this.points.push(position);
 
-                // สร้างหมุด (sphere) ณ ตำแหน่งที่แตะ
-                const marker = document.createElement('a-entity');
-                marker.setAttribute('mixin', 'marker-sphere');
-                marker.object3D.position.copy(position);
-                this.el.sceneEl.appendChild(marker);
-                
-                // ถ้ามีครบ 2 จุด ให้วาดเส้นและหยุดอัปเดต
-                if (this.points.length === 2) {
-                    this.createLine();
-                    this.calculateDistance();
-                } 
-                // ถ้ามีแค่จุดเดียว ให้เริ่มสร้างเส้น
-                else if (this.points.length === 1) {
-                    this.createLine();
+                    if (this.points.length === 1) {
+                        this.lineEntity = document.createElement('a-entity');
+                        this.lineEntity.setAttribute('line', {
+                            color: '#FFD700',
+                            linewidth: 5,
+                            start: this.points[0],
+                            end: this.points[0]
+                        });
+                        this.el.sceneEl.appendChild(this.lineEntity);
+                    }
                 }
             },
             
-            createLine: function() {
-                if (this.lineEntity) {
-                    this.el.sceneEl.removeChild(this.lineEntity);
-                }
-                this.lineEntity = document.createElement('a-entity');
-                this.lineEntity.setAttribute('line', {
-                    color: '#FFD700', // สีทอง
-                    linewidth: 5,
-                    start: this.points[0],
-                    end: this.points.length > 1 ? this.points[1] : this.points[0] // ถ้ามีจุดเดียวให้ end อยู่ที่เดียวกับ start
-                });
-                this.el.sceneEl.appendChild(this.lineEntity);
-            },
-
             tick: function() {
                 // อัปเดตเส้นแบบเรียลไทม์เมื่อมี 1 จุด
                 if (this.points.length === 1 && this.lineEntity) {
@@ -173,34 +92,23 @@
                         const reticlePosition = new THREE.Vector3();
                         reticle.object3D.getWorldPosition(reticlePosition);
                         
-                        // อัปเดตจุดสิ้นสุดของเส้นและคำนวณระยะทาง
                         this.lineEntity.setAttribute('line', 'end', reticlePosition);
-                        this.calculateDistance(this.points[0], reticlePosition);
+                        const distance = this.points[0].distanceTo(reticlePosition);
+                        this.distanceText.textContent = `${distance.toFixed(2)} m`;
                     }
+                } else if (this.points.length === 2) {
+                    const distance = this.points[0].distanceTo(this.points[1]);
+                    this.distanceText.textContent = `${distance.toFixed(2)} m`;
                 }
-            },
-            
-            calculateDistance: function(p1 = this.points[0], p2 = this.points[1]) {
-                if (!p1 || !p2) return;
-                const distance = p1.distanceTo(p2);
-                this.distanceText.textContent = `${distance.toFixed(2)} m`;
             },
 
             reset: function() {
-                // ล้างค่าทั้งหมด
                 this.points = [];
-                
-                // ลบเส้น
                 if (this.lineEntity) {
                     this.lineEntity.parentNode.removeChild(this.lineEntity);
                     this.lineEntity = null;
                 }
-                
-                // ลบหมุดทั้งหมด
-                const markers = document.querySelectorAll('[mixin="marker-sphere"]');
-                markers.forEach(marker => marker.parentNode.removeChild(marker));
-                
-                // รีเซ็ตข้อความ
+                document.querySelectorAll('[mixin="marker-sphere"]').forEach(marker => marker.parentNode.removeChild(marker));
                 this.distanceText.textContent = '0.00 m';
             }
         });
